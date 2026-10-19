@@ -564,7 +564,9 @@ class IamServiceLinkedRoleIntegrationTest {
         String roleName = "AWSServiceRoleForProtectprobe";
         String readOnly = "arn:aws:iam::aws:policy/ReadOnlyAccess";
 
-        refusedAsUnmodifiable("UpdateRole", "RoleName", roleName, "Description", "hijacked");
+        // UpdateRole is protected for its duration, not for its description, which AWS documents
+        // as editable on any role: aDescriptionEditIsTakenAndTheDurationIsStillRefused has that.
+        refusedAsUnmodifiable("UpdateRole", "RoleName", roleName, "MaxSessionDuration", "7200");
         refusedAsUnmodifiable("UpdateAssumeRolePolicy", "RoleName", roleName,
                 "PolicyDocument", "{\"Version\":\"2012-10-17\",\"Statement\":[]}");
         refusedAsUnmodifiable("DetachRolePolicy", "RoleName", roleName, "PolicyArn", readOnly);
@@ -759,6 +761,88 @@ class IamServiceLinkedRoleIntegrationTest {
             .body("ErrorResponse.Error.Message",
                     equalTo("Service role name AWSServiceRoleForTakenprobe has been taken in this "
                             + "account, please try a different suffix."));
+    }
+
+    @Test
+    @Order(32)
+    void aDescriptionOutsideItsShapeIsRefusedBeforeTheRoleIsCreated() {
+        // roleDescriptionType is the same shape CreateRole and UpdateRole take, so this answers
+        // ValidationError rather than this action's own InvalidInput, and stores nothing.
+        given()
+            .formParam("Action", "CreateServiceLinkedRole")
+            .formParam("AWSServiceName", "descprobe.amazonaws.com")
+            .formParam("Description", "d".repeat(1001))
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400)
+            .body("ErrorResponse.Error.Code", equalTo("ValidationError"))
+            .body("ErrorResponse.Error.Message", containsString("at 'description'"));
+
+        given()
+            .formParam("Action", "GetRole")
+            .formParam("RoleName", "AWSServiceRoleForDescprobe")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(404);
+    }
+
+    /**
+     * The description is the one thing AWS documents as editable on a service-linked role: "You
+     * can edit the description of any role from the IAM console, API, or CLI", and the user guide
+     * reaches it with {@code update-role --description} or {@code UpdateRoleDescription}, for
+     * which it publishes a policy over {@code arn:aws:iam::*:role/aws-service-role/*}. The guard
+     * stands on the duration instead, and a request for both is refused whole.
+     */
+    @Test
+    @Order(33)
+    void aDescriptionEditIsTakenAndTheDurationIsStillRefused() {
+        createServiceLinkedRole("descriptionprobe.amazonaws.com");
+        String roleName = "AWSServiceRoleForDescriptionprobe";
+
+        given()
+            .formParam("Action", "UpdateRoleDescription")
+            .formParam("RoleName", roleName)
+            .formParam("Description", "edited through UpdateRoleDescription")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("UpdateRoleDescriptionResponse.UpdateRoleDescriptionResult.Role.Description",
+                    equalTo("edited through UpdateRoleDescription"))
+            .body("UpdateRoleDescriptionResponse.UpdateRoleDescriptionResult.Role.Path",
+                    equalTo(SERVICE_LINKED_ROLE_PATH + "descriptionprobe.amazonaws.com/"));
+
+        // The action the user guide's own procedure names, with nothing else in the request.
+        given()
+            .formParam("Action", "UpdateRole")
+            .formParam("RoleName", roleName)
+            .formParam("Description", "edited through UpdateRole")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        refusedAsUnmodifiable("UpdateRole", "RoleName", roleName,
+                "Description", "hijacked", "MaxSessionDuration", "7200");
+
+        // The refused request carried a description too, and left the stored one alone.
+        given()
+            .formParam("Action", "GetRole")
+            .formParam("RoleName", roleName)
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("GetRoleResponse.GetRoleResult.Role.Description",
+                    equalTo("edited through UpdateRole"))
+            .body("GetRoleResponse.GetRoleResult.Role.MaxSessionDuration", equalTo("3600"));
     }
 
     /**

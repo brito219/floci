@@ -68,6 +68,7 @@ or at the AWS Sign-In host of a region in the deployment's partition; any other 
 | DeleteRole | Deletes an IAM role from the local IAM store. |
 | ListRoles | Lists IAM roles in the local account, with `Marker` and `MaxItems` paging. |
 | UpdateRole | Updates mutable IAM role fields. |
+| UpdateRoleDescription | Modifies only a role's description and returns the modified role. |
 | CreateServiceLinkedRole | Creates a role under /aws-service-role/ for a service principal. |
 | DeleteServiceLinkedRole | Deletes a service-linked role and returns a deletion task id. |
 | GetServiceLinkedRoleDeletionStatus | Returns the status of a service-linked role deletion. |
@@ -77,6 +78,10 @@ or at the AWS Sign-In host of a region in the deployment's partition; any other 
 | ListRoleTags | Lists tags stored for an IAM role. |
 
 `CreateRole` and every action that takes a `RoleName` (`GetRole`, `DeleteRole`, `UpdateRole`, `TagRole`, `AttachRolePolicy`, `PutRolePolicy` and the rest) check it as AWS does: 1-64 characters of `[\w+=,.@-]`, otherwise `ValidationError`. A colon is never valid, so no role can take the name of the EC2 instance identity role, `aws:ec2-instance`.
+
+`UpdateRoleDescription` is the description half of `UpdateRole`, which is what AWS's own reference tells callers to use instead. Both of its members are required, so a request without `Description` answers `ValidationError` rather than leaving the role as it is, an empty `Description` is a value that clears the description, and the modified role comes back in the response, which `UpdateRole` does not answer at all.
+
+A role `Description` is held to the shape AWS publishes for it on every action that takes one, `CreateRole`, `UpdateRole`, `UpdateRoleDescription` and `CreateServiceLinkedRole`: at most 1000 characters of `[\u0009\u000A\u000D\u0020-\u007E\u00A1-\u00FF]`, which admits tab, newline and carriage return and no other control character, otherwise `ValidationError`. The check runs before the role is looked up or created, so a refused description never reaches a stored role, and the `Role` these actions and `GetRole` answer always stays parsable XML.
 
 ### Policies
 
@@ -1937,11 +1942,14 @@ the emulator cannot reason about:
 `CreateServiceLinkedRole` puts a role under `/aws-service-role/<principal>/` and marks it as
 service-linked. As on AWS, a role carrying that mark is protected: `AttachRolePolicy`,
 `DetachRolePolicy`, `PutRolePolicy`, `DeleteRolePolicy`, `PutRolePermissionsBoundary`,
-`DeleteRolePermissionsBoundary`, `UpdateRole`, `UpdateAssumeRolePolicy`, `AddRoleToInstanceProfile`,
+`DeleteRolePermissionsBoundary`, `UpdateAssumeRolePolicy`, `AddRoleToInstanceProfile`,
 `RemoveRoleFromInstanceProfile` and `DeleteRole` all answer `UnmodifiableEntity` and name the
-linked service to go through instead. `TagRole` and `UntagRole` are allowed, as on AWS. Within the
-IAM API `DeleteServiceLinkedRole` is the only way to remove such a role — the emulator's own
-`/_floci/state/reset` still clears it along with everything else.
+linked service to go through instead. The description is the one field AWS leaves editable, "from
+the IAM console, API, or CLI", so `UpdateRoleDescription` goes through on a service-linked role and
+so does an `UpdateRole` carrying only a `Description`; `UpdateRole` answers `UnmodifiableEntity`
+once it carries `MaxSessionDuration`, and then writes neither field. `TagRole` and `UntagRole` are
+allowed, as on AWS. Within the IAM API `DeleteServiceLinkedRole` is the only way to remove such a
+role — the emulator's own `/_floci/state/reset` still clears it along with everything else.
 
 Four deviations to be aware of:
 

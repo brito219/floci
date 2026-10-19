@@ -193,6 +193,17 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
     private static final Pattern SERVICE_PRINCIPAL_PATTERN = Pattern.compile("[\\w+=,.@-]{1,128}");
     /** CustomSuffix as AWS constrains it: 1-64 characters of {@code [\w+=,.@-]}. */
     private static final Pattern CUSTOM_SUFFIX_PATTERN = Pattern.compile("[\\w+=,.@-]{1,64}");
+    private static final int ROLE_DESCRIPTION_MAX_LENGTH = 1000;
+    /**
+     * roleDescriptionType's character set, which AWS writes as
+     * {@code [\u0009\u000A\u000D\u0020-\u007E\u00A1-\u00FF]*}: tab, newline, carriage
+     * return, printable ASCII and the Latin-1 supplement, and no other control character.
+     * Written here the way {@code java.util.regex} reads it.
+     */
+    private static final Pattern ROLE_DESCRIPTION_PATTERN = Pattern.compile("[\\t\\n\\r\\x20-\\x7E\\xA1-\\xFF]*");
+    /** AWS's own spelling of that set, for the message, where the regex form would not be AWS's. */
+    private static final String ROLE_DESCRIPTION_PATTERN_TEXT =
+            "[\\u0009\\u000A\\u000D\\u0020-\\u007E\\u00A1-\\u00FF]*";
     private static final int ROLE_NAME_MAX_LENGTH = 64;
     /** roleNameType's character set. Excluding {@code :} is what reserves names such as {@code aws:ec2-instance} for AWS. */
     private static final Pattern ROLE_NAME_PATTERN = Pattern.compile("[\\w+=,.@-]+");
@@ -1159,6 +1170,7 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
                               String description, int maxSessionDuration, Map<String, String> tags,
                               String permissionsBoundaryArn) {
         validateRoleName(roleName);
+        validateRoleDescription(description);
         if (permissionsBoundaryArn != null) {
             requirePolicy(permissionsBoundaryArn); // validate before anything is created
         }
@@ -1207,6 +1219,36 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
             return aware.getForAccount(accountId, roleName);
         }
         return roles.get(roleName);
+    }
+
+    /**
+     * roleDescriptionType: at most 1000 characters of the set AWS publishes, which admits tab,
+     * newline and carriage return and no other control character. Enforced wherever a role
+     * description is taken, so {@code CreateRole}, {@code UpdateRole},
+     * {@code UpdateRoleDescription} and {@code CreateServiceLinkedRole} answer the same way, and
+     * so a character XML cannot carry never reaches a stored role: {@code XmlBuilder} escapes the
+     * five entities and passes everything else through, which would make the {@code Role} this
+     * action and {@code GetRole} answer unparsable.
+     *
+     * <p>The rendering names neither the offending value nor the set, the way
+     * {@link #requireStatusFromEnum} does, which is the one IAM constraint rendering a recording
+     * covers. It also keeps the refused description out of the error body, where a control
+     * character would break the answer it is being refused for.
+     */
+    private static void validateRoleDescription(String description) {
+        if (description == null) {
+            return;
+        }
+        String constraint;
+        if (description.length() > ROLE_DESCRIPTION_MAX_LENGTH) {
+            constraint = "Member must have length less than or equal to " + ROLE_DESCRIPTION_MAX_LENGTH;
+        } else if (!ROLE_DESCRIPTION_PATTERN.matcher(description).matches()) {
+            constraint = "Member must satisfy regular expression pattern: " + ROLE_DESCRIPTION_PATTERN_TEXT;
+        } else {
+            return;
+        }
+        throw SmithyValidationErrors.validationError(
+                "Value at 'description' failed to satisfy constraint: " + constraint);
     }
 
     /** roleNameType: 1-64 characters of {@code [\w+=,.@-]}, reported the way AWS reports a model constraint. */
@@ -1258,8 +1300,10 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
 
     /**
      * AWS publishes UnmodifiableEntity on twelve role actions, and its message names the linked
-     * service the caller has to go through instead. This guards the eleven of them the emulator
-     * implements; UpdateRoleDescription is the twelfth and has no handler here. TagRole and
+     * service the caller has to go through instead. This guards the ten of them that refuse a
+     * service-linked role whatever the request asks for. UpdateRole and UpdateRoleDescription are
+     * the other two, and the user guide carves a description out of both, so {@link #updateRole}
+     * reaches for this only where a request asks for more than a description. TagRole and
      * UntagRole are deliberately not guarded — AWS does not publish the error on either, and
      * TagRole's reference says the role "can be a regular role or a service-linked role".
      * Within the IAM API, {@link #deleteServiceLinkedRole} is the only way to remove such a role.
@@ -1313,6 +1357,7 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
             throw new AwsException("InvalidInput",
                     "CustomSuffix must be 1-64 characters matching [\\w+=,.@-].", 400);
         }
+        validateRoleDescription(description);
         // Most services refuse a suffix outright. The table carries what AWS was recorded
         // doing, and UNKNOWN keeps taking one rather than refusing on an inference: the name
         // as the caller sent it, since every recording used the canonical form and the two
@@ -1407,13 +1452,40 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
                 .toList();
     }
 
-    public void updateRole(String roleName, String description, int maxSessionDuration) {
+    /**
+     * Updates a role's description, its maximum session duration, or both. A service-linked role
+     * takes the description and refuses the duration: "You can edit the description of any role
+     * from the IAM console, API, or CLI", and the user guide's procedure for editing one is this
+     * action, as {@code aws iam update-role --role-name ROLE-NAME --description DESCRIPTION}. So
+     * the protection stands on MaxSessionDuration, the only other member this action takes, and a
+     * request carrying both is refused whole, before the description is written.
+     */
+    public IamRole updateRole(String roleName, String description, int maxSessionDuration) {
         validateRoleName(roleName);
+        validateRoleDescription(description);
         IamRole role = getRole(roleName);
-        requireNotServiceLinked(role, roleName);
-        if (description != null) role.setDescription(description);
-        if (maxSessionDuration > 0) role.setMaxSessionDuration(maxSessionDuration);
+        if (maxSessionDuration > 0) {
+            requireNotServiceLinked(role, roleName);
+        }
+        if (description != null) {
+            role.setDescription(description);
+        }
+        if (maxSessionDuration > 0) {
+            role.setMaxSessionDuration(maxSessionDuration);
+        }
         roles.put(roleName, role);
+        return role;
+    }
+
+    /**
+     * Modifies only a role's description. AWS documents UpdateRoleDescription as performing "the
+     * same function as the Description parameter in the UpdateRole operation", so it is that path
+     * with nothing else touched, and it answers the modified role. A service-linked role takes it:
+     * the user guide publishes a policy granting {@code iam:UpdateRoleDescription} on
+     * {@code arn:aws:iam::*:role/aws-service-role/*} for editing the description of one.
+     */
+    public IamRole updateRoleDescription(String roleName, String description) {
+        return updateRole(roleName, description, 0);
     }
 
     public void updateAssumeRolePolicy(String roleName, String policyDocument) {

@@ -93,6 +93,76 @@ class IamServiceTest {
     }
 
     @Test
+    void updateRoleDescriptionAnswersTheRoleAndMovesNothingElse() {
+        // "This operation performs the same function as the Description parameter in the UpdateRole
+        // operation", and UpdateRole answers no shape at all, so the role comes back from here.
+        iamService.createRole("R", "/", "{}", "before", 7200, null);
+
+        IamRole updated = iamService.updateRoleDescription("R", "after");
+
+        assertEquals("after", updated.getDescription());
+        assertEquals(7200, updated.getMaxSessionDuration());
+        assertEquals("{}", updated.getAssumeRolePolicyDocument());
+        assertEquals("after", iamService.getRole("R").getDescription());
+    }
+
+    @Test
+    void aRoleDescriptionIsHeldToItsShapeWhereverItIsTaken() {
+        iamService.createRole("R", "/", "{}", "fine", 3600, null);
+
+        AwsException tooLong = assertThrows(AwsException.class,
+                () -> iamService.updateRoleDescription("R", "d".repeat(1001)));
+        assertEquals("ValidationError", tooLong.getErrorCode());
+        assertEquals("1 validation error detected: Value at 'description' failed to satisfy "
+                + "constraint: Member must have length less than or equal to 1000",
+                tooLong.getMessage());
+
+        AwsException outsideTheSet = assertThrows(AwsException.class,
+                () -> iamService.updateRoleDescription("R", "a" + (char) 1 + "b"));
+        assertEquals("ValidationError", outsideTheSet.getErrorCode());
+
+        // Neither refusal wrote, and the create path answers the same way without storing a role.
+        assertEquals("fine", iamService.getRole("R").getDescription());
+        assertEquals("ValidationError", assertThrows(AwsException.class,
+                () -> iamService.createRole("R2", "/", "{}", "d".repeat(1001), 3600, null))
+                .getErrorCode());
+        assertThrows(AwsException.class, () -> iamService.getRole("R2"));
+
+        // Tab, newline and carriage return are inside the set AWS publishes.
+        iamService.updateRoleDescription("R", "one\ntwo\tthree\r");
+        assertEquals("one\ntwo\tthree\r", iamService.getRole("R").getDescription());
+    }
+
+    @Test
+    void updateRoleDescriptionReadsTheRoleNameBeforeTheLookup() {
+        AwsException error = assertThrows(AwsException.class,
+                () -> iamService.updateRoleDescription("role:with:colons", "whatever"));
+
+        assertEquals("ValidationError", error.getErrorCode());
+        assertEquals(400, error.getHttpStatus());
+    }
+
+    @Test
+    void aServiceLinkedRoleTakesADescriptionEditAndRefusesADuration() {
+        // "You can edit the description of any role from the IAM console, API, or CLI", by either
+        // action, so the protection AWS publishes on both stands on the duration instead.
+        String roleName = iamService.createServiceLinkedRole("es.amazonaws.com", null, "created with")
+                .getRoleName();
+
+        assertEquals("edited", iamService.updateRoleDescription(roleName, "edited").getDescription());
+        assertEquals("edited again", iamService.updateRole(roleName, "edited again", 0).getDescription());
+
+        AwsException refused = assertThrows(AwsException.class,
+                () -> iamService.updateRole(roleName, "hijacked", 7200));
+        assertEquals("UnmodifiableEntity", refused.getErrorCode());
+        assertEquals(400, refused.getHttpStatus());
+
+        // Refused whole: the description that came with the duration was not written either.
+        assertEquals("edited again", iamService.getRole(roleName).getDescription());
+        assertEquals(3600, iamService.getRole(roleName).getMaxSessionDuration());
+    }
+
+    @Test
     void roleInlinePolicyQuotaIgnoresWhitespaceAndPreservesRejectedReplacement() {
         iamService.createRole("R", "/", "{}", null, 0, null);
         String exactLimit = policyWithNonWhitespaceLength(10_240);

@@ -207,6 +207,7 @@ public class IamQueryHandler {
             case "DeleteRole" -> handleDeleteRole(params);
             case "ListRoles" -> handleListRoles(params);
             case "UpdateRole" -> handleUpdateRole(params);
+            case "UpdateRoleDescription" -> handleUpdateRoleDescription(params);
             case "CreateServiceLinkedRole" -> handleCreateServiceLinkedRole(params);
             case "DeleteServiceLinkedRole" -> handleDeleteServiceLinkedRole(params);
             case "GetServiceLinkedRoleDeletionStatus" -> handleGetServiceLinkedRoleDeletionStatus(params);
@@ -1421,6 +1422,24 @@ public class IamQueryHandler {
                 getParam(params, "Description"),
                 getIntParam(params, "MaxSessionDuration", 0));
         return Response.ok(AwsQueryResponse.envelopeNoResult("UpdateRole", AwsNamespaces.IAM)).build();
+    }
+
+    /**
+     * The description half of UpdateRole, which AWS's own reference opens by telling callers to use
+     * instead. Both members are required here, where UpdateRole's are optional, and the modified
+     * role comes back, which UpdateRole does not answer at all.
+     */
+    private Response handleUpdateRoleDescription(MultivaluedMap<String, String> params) {
+        // Read rather than requireParam: roleDescriptionType declares no minimum length, so an
+        // empty Description is a value that clears the description, not an absent member.
+        String description = params.getFirst("Description");
+        if (description == null) {
+            throw SmithyValidationErrors.validationError(
+                    "Value null at 'description' failed to satisfy constraint: Member must not be null");
+        }
+        IamRole role = iamService.updateRoleDescription(getParam(params, "RoleName"), description);
+        String result = new XmlBuilder().start("Role").raw(roleXml(role, true)).end("Role").build();
+        return Response.ok(AwsQueryResponse.envelope("UpdateRoleDescription", AwsNamespaces.IAM, result)).build();
     }
 
     private Response handleUpdateAssumeRolePolicy(MultivaluedMap<String, String> params) {
