@@ -17,6 +17,7 @@ import io.github.hectorvent.floci.services.iam.ResourcePolicyProvider;
 import io.github.hectorvent.floci.services.iam.ScpProvider;
 import io.github.hectorvent.floci.services.iam.model.CallerContext;
 import io.github.hectorvent.floci.services.s3.S3Controller;
+import io.github.hectorvent.floci.services.scheduler.SchedulerController;
 import io.quarkus.vertx.http.runtime.CurrentVertxRequest;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
@@ -336,6 +337,31 @@ class IamEnforcementFilterTest {
         verify(arnBuilder).buildResources("apigateway", containerRequest,
                 "us-east-1", "000000000000");
         verify(conditionContextResolver).resolve("apigateway", "apigateway:POST", containerRequest);
+    }
+
+    @Test
+    void schedulerResourcesAreBuiltInTheRequestsPartition() {
+        // A Region no partition publishes takes the deployment's partition, which Scheduler mints its ARNs in.
+        ContainerRequestContext containerRequest = mock(ContainerRequestContext.class);
+        String auth = "AWS4-HMAC-SHA256 Credential=AKIAUSER/20260924/xx-local-1/scheduler/aws4_request, "
+                + "SignedHeaders=host, Signature=abc";
+        requestContext.setAccountId("000000000000");
+        requestContext.setRegion("xx-local-1");
+        requestContext.setPartition("aws-cn");
+        when(accountResolver.extractAccessKeyId(auth)).thenReturn("AKIAUSER");
+        when(containerRequest.getHeaderString("Authorization")).thenReturn(auth);
+        when(containerRequest.getProperty(AwsProtocolClaimFilter.CLAIM_PROPERTY))
+                .thenReturn(ProtocolClaim.rest());
+        when(catalog.byResourceClass(SchedulerController.class))
+                .thenReturn(Optional.of(descriptor("scheduler", ServiceProtocol.JSON,
+                        Set.of("scheduler"), SchedulerController.class)));
+        when(actionRegistry.resolveRoute("scheduler", containerRequest)).thenReturn("scheduler:GetSchedule");
+        when(arnBuilder.buildResources(any(), any(), any(), any(), any())).thenReturn(List.of("*"));
+        when(iamService.resolveCallerContext(eq("AKIAUSER"), any())).thenReturn(CallerContext.of(List.of()));
+
+        newFilter(resourceInfo(SchedulerController.class)).filter(containerRequest);
+
+        verify(arnBuilder).buildResources("scheduler", containerRequest, "xx-local-1", "000000000000", "aws-cn");
     }
 
     @Test

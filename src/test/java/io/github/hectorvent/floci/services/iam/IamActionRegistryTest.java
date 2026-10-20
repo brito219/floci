@@ -269,6 +269,21 @@ class IamActionRegistryTest {
     }
 
     @Test
+    void schedulerAndPipesTaggingIsCheckedOnBothTagRoutes() {
+        for (String scope : List.of("scheduler", "pipes")) {
+            for (String path : List.of("/tags/arn:aws:" + scope + ":us-east-1:000000000000:x", "/tags")) {
+                String prefix = scope + ":";
+                assertEquals(prefix + "ListTagsForResource", registry.resolveRoute(scope,
+                        mockCtx("GET", path, new MultivaluedHashMap<>(), MediaType.APPLICATION_JSON_TYPE, "{}")), path);
+                assertEquals(prefix + "TagResource", registry.resolveRoute(scope,
+                        mockCtx("POST", path, new MultivaluedHashMap<>(), MediaType.APPLICATION_JSON_TYPE, "{}")), path);
+                assertEquals(prefix + "UntagResource", registry.resolveRoute(scope,
+                        mockCtx("DELETE", path, new MultivaluedHashMap<>(), MediaType.APPLICATION_JSON_TYPE, "{}")), path);
+            }
+        }
+    }
+
+    @Test
     void durableExecutionRoutesResolveToTheirActions() {
         String arn = "arn%3Aaws%3Alambda%3Aus-east-1%3A000000000000%3Afunction%3Af%3A%24LATEST"
                 + "%2Fdurable-execution%2Fname%2Fid";

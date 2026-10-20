@@ -65,6 +65,7 @@ import io.github.hectorvent.floci.services.s3.S3Controller;
 import io.github.hectorvent.floci.services.s3tables.S3TablesController;
 import io.github.hectorvent.floci.services.s3vectors.S3VectorsController;
 import io.github.hectorvent.floci.services.sagemaker.SageMakerRuntimeController;
+import io.github.hectorvent.floci.services.scheduler.SchedulerController;
 import io.github.hectorvent.floci.services.securityhub.SecurityHubController;
 import io.github.hectorvent.floci.services.ses.SesAccountController;
 import io.github.hectorvent.floci.services.ses.SesConfigurationSetController;
@@ -251,7 +252,7 @@ public class ResolvedServiceCatalog {
                 descriptor("scheduler", "scheduler", config.services().scheduler().enabled(), true,
                         "scheduler", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,
                         protocols(ServiceProtocol.JSON),
-                        Set.of(), Set.of("scheduler"), Set.of(), Set.of()),
+                        Set.of(), Set.of("scheduler"), Set.of(), Set.of(SchedulerController.class)),
                 descriptor("logs", "cloudwatchlogs", config.services().cloudwatchlogs().enabled(), true,
                         "cloudwatchlogs", storageMode(config.storage().services().cloudwatchlogs().mode(), config.storage().mode()),
                         config.storage().services().cloudwatchlogs().flushIntervalMs(), null, ServiceProtocol.JSON,

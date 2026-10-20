@@ -68,6 +68,64 @@ class IamRestRouteEnforcementIntegrationTest {
                 .get("/2018-10-31/layers").then().statusCode(404);
     }
 
+    @Test
+    void aScheduleRequestSignedForAnotherServiceIsStillCheckedAsScheduler() {
+        // Checked by the route it reached, not by the credential scope it was signed with: an S3
+        // grant does not let the request through as an S3 request.
+        String user = user("route-scheduler-scope");
+        policy(user, allow("s3:*", "*"));
+        refused(as(user, "s3").get("/schedules/route-schedule-" + suffix()).then(), "scheduler:GetSchedule");
+    }
+
+    @Test
+    void schedulerTaggingIsCheckedOnTheBareTagsRouteToo() {
+        // The shared tagging routes also take the ARN in the body of POST /tags.
+        String user = user("route-scheduler-tags");
+        String group = scheduleGroup("route-group-" + suffix());
+
+        policy(user, allow("scheduler:ListTagsForResource", "*"));
+        refused(as(user, "scheduler").body(tagBody(group)).post("/tags").then(), "scheduler:TagResource");
+        policy(user, allow("scheduler:TagResource", group));
+        // Allowed on that group, the request reaches Scheduler, which has no such group.
+        as(user, "scheduler").body(tagBody(group)).post("/tags").then().statusCode(not(403));
+    }
+
+    @Test
+    void postTagsIsCheckedAgainstTheArnItsBodyNames() {
+        // POST /tags tags the ARN its body names: one named in the query does not move the check.
+        String user = user("route-tags-body");
+        String allowed = scheduleGroup("route-allowed-" + suffix());
+        String other = scheduleGroup("route-other-" + suffix());
+
+        policy(user, allow("scheduler:TagResource", allowed));
+        refused(as(user, "scheduler").queryParam("resourceArn", allowed).body(tagBody(other)).post("/tags").then(),
+                "scheduler:TagResource");
+    }
+
+    @Test
+    void sharedTaggingIsCheckedAsTheServiceItsArnNames() {
+        // The shared tagging routes hand the request to the service its ARN names, whatever scope it is
+        // signed with: a Pipes grant does not let the caller tag a schedule group, and a scope with no
+        // tagging rule does not let the request through unchecked.
+        String user = user("route-tags-scope");
+        String group = scheduleGroup("route-group-" + suffix());
+        String cluster = "arn:aws:eks:us-east-1:" + ACCOUNT + ":cluster/route-cluster-" + suffix();
+
+        // Nor is an ARN of a service with no tagging rule checked as the signing scope's action.
+        as(user, "pipes").body(tagBody(cluster)).post("/tags").then().body(not(containsString("pipes:TagResource")));
+        policy(user, allow("pipes:TagResource", "*"));
+        refused(as(user, "pipes").body(tagBody(group)).post("/tags").then(), "scheduler:TagResource");
+        refused(as(user, "sqs").body(tagBody(group)).post("/tags").then(), "scheduler:TagResource");
+    }
+
+    private static String scheduleGroup(String name) {
+        return "arn:aws:scheduler:us-east-1:" + ACCOUNT + ":schedule-group/" + name;
+    }
+
+    private static String tagBody(String arn) {
+        return "{\"resourceArn\":\"" + arn + "\",\"tags\":[{\"key\":\"team\",\"value\":\"a\"}]}";
+    }
+
     private static void refused(ValidatableResponse response, String action) {
         response.statusCode(403).body(containsString(action)).body(not(containsString("iam:PassRole")));
     }

@@ -94,6 +94,16 @@ public class ResourceArnBuilder {
 
     public List<String> buildResources(String credentialScope, ContainerRequestContext ctx,
                                        String region, String accountId) {
+        return buildResources(credentialScope, ctx, region, accountId, AwsRegions.partitionFor(region));
+    }
+
+    /**
+     * The resources a request is checked against. Scheduler and Pipes ARNs are minted in {@code partition},
+     * the request's, as those services mint theirs, so a Region no partition publishes gets the deployment's
+     * partition rather than {@code aws}.
+     */
+    public List<String> buildResources(String credentialScope, ContainerRequestContext ctx,
+                                       String region, String accountId, String partition) {
         if (credentialScope == null) {
             return List.of("*");
         }
@@ -109,6 +119,8 @@ public class ResourceArnBuilder {
             case "kms"            -> List.of(buildKmsArn(path, region, accountId));
             case "iam"            -> buildIamArns(ctx, region, accountId);
             case "resource-groups" -> List.of(buildResourceGroupArn(ctx, region, accountId));
+            case "scheduler"      -> List.of(buildSchedulerArn(path, ctx, region, accountId, partition));
+            case "pipes"          -> List.of(buildPipesArn(path, ctx, region, accountId, partition));
             default               -> List.of("*");
         };
     }
@@ -701,6 +713,87 @@ public class ResourceArnBuilder {
             // A reference Lambda refuses, which its handler answers with a 400 before acting on anything.
             return AwsArnUtils.Arn.of("lambda", region, accountId, "function:" + name).toString();
         }
+    }
+
+    /**
+     * The resource of an EventBridge Scheduler route: {@code schedule/<group>/<name>}, the group read where
+     * Scheduler reads it, the body's {@code GroupName} on a create or an update and {@code groupName}
+     * otherwise, and {@code default} when the request names none; {@code schedule-group/<name>}; or the
+     * ARN a tagging route names. The list routes name no resource.
+     */
+    private String buildSchedulerArn(String path, ContainerRequestContext ctx, String region, String accountId,
+                                     String partition) {
+        String schedule = segmentAfterPrefix(path, "/schedules/");
+        if (schedule != null) {
+            String group;
+            if ("POST".equalsIgnoreCase(ctx.getMethod()) || "PUT".equalsIgnoreCase(ctx.getMethod())) {
+                JsonNode body = readJsonBody(ctx);
+                group = body == null ? null : body.path("GroupName").asText(null);
+            } else {
+                group = ctx.getUriInfo().getQueryParameters().getFirst("groupName");
+            }
+            if (group == null || group.isBlank()) {
+                group = "default";
+            }
+            return new AwsArnUtils.Arn(partition, "scheduler", region, accountId,
+                    "schedule/" + group + "/" + schedule).toString();
+        }
+        String scheduleGroup = segmentAfterPrefix(path, "/schedule-groups/");
+        if (scheduleGroup != null) {
+            return new AwsArnUtils.Arn(partition, "scheduler", region, accountId,
+                    "schedule-group/" + scheduleGroup).toString();
+        }
+        return taggedResource(ctx);
+    }
+
+    /** The resource of an EventBridge Pipes route: {@code pipe/<name>}, or the ARN a tagging route names. */
+    private String buildPipesArn(String path, ContainerRequestContext ctx, String region, String accountId,
+                                 String partition) {
+        String pipe = segmentAfterPrefix(path, "/v1/pipes/");
+        if (pipe != null) {
+            return new AwsArnUtils.Arn(partition, "pipes", region, accountId, "pipe/" + pipe).toString();
+        }
+        return taggedResource(ctx);
+    }
+
+    /** The ARN a shared tagging route names, or {@code *} for any other route. */
+    private String taggedResource(ContainerRequestContext ctx) {
+        String arn = taggedArn(ctx);
+        return arn != null && arn.startsWith("arn:") ? arn : "*";
+    }
+
+    /**
+     * The ARN a shared tagging route acts on, read where its controller reads it: after {@code /tags/} or
+     * {@code /v1/tags/} in the path; on {@code POST /tags}, the body's {@code resourceArn}; and on the other
+     * bare routes, the {@code resourceArn} query parameter. Null for any other route, or when the request
+     * names none.
+     */
+    public String taggedArn(ContainerRequestContext ctx) {
+        String path = ctx.getUriInfo().getPath();
+        for (String route : List.of("/tags", "/v1/tags")) {
+            if (path.startsWith(route + "/")) {
+                return path.substring(route.length() + 1);
+            }
+        }
+        if ("/tags".equals(path) && "POST".equalsIgnoreCase(ctx.getMethod())) {
+            JsonNode body = readJsonBody(ctx);
+            return body == null ? null : body.path("resourceArn").asText(null);
+        }
+        if ("/tags".equals(path) || "/v1/tags".equals(path)) {
+            return ctx.getUriInfo().getQueryParameters().getFirst("resourceArn");
+        }
+        return null;
+    }
+
+    /** The path segment right after {@code prefix}, or null when the path doesn't start with it or names none. */
+    private static String segmentAfterPrefix(String path, String prefix) {
+        if (!path.startsWith(prefix)) {
+            return null;
+        }
+        String rest = path.substring(prefix.length());
+        int slash = rest.indexOf('/');
+        String segment = slash < 0 ? rest : rest.substring(0, slash);
+        return segment.isEmpty() ? null : segment;
     }
 
     /**

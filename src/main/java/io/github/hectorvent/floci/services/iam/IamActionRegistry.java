@@ -141,6 +141,33 @@ public class IamActionRegistry {
         rule("apigateway", "PATCH",  ".*",                                          "apigateway:PATCH"),
         rule("apigateway", "DELETE", ".*",                                          "apigateway:DELETE"),
 
+        // ── EventBridge Scheduler ──────────────────────────────────────────────
+        rule("scheduler", "GET",    "^/schedules/[^/]+$",       "scheduler:GetSchedule"),
+        rule("scheduler", "POST",   "^/schedules/[^/]+$",       "scheduler:CreateSchedule"),
+        rule("scheduler", "PUT",    "^/schedules/[^/]+$",       "scheduler:UpdateSchedule"),
+        rule("scheduler", "DELETE", "^/schedules/[^/]+$",       "scheduler:DeleteSchedule"),
+        rule("scheduler", "GET",    "^/schedules$",             "scheduler:ListSchedules"),
+        rule("scheduler", "GET",    "^/schedule-groups/[^/]+$", "scheduler:GetScheduleGroup"),
+        rule("scheduler", "POST",   "^/schedule-groups/[^/]+$", "scheduler:CreateScheduleGroup"),
+        rule("scheduler", "DELETE", "^/schedule-groups/[^/]+$", "scheduler:DeleteScheduleGroup"),
+        rule("scheduler", "GET",    "^/schedule-groups$",       "scheduler:ListScheduleGroups"),
+        // Tagging is served at /tags/<arn> and at /tags, naming the ARN in the query or the body.
+        rule("scheduler", "GET",    "^/tags(/.+)?$",            "scheduler:ListTagsForResource"),
+        rule("scheduler", "POST",   "^/tags(/.+)?$",            "scheduler:TagResource"),
+        rule("scheduler", "DELETE", "^/tags(/.+)?$",            "scheduler:UntagResource"),
+
+        // ── EventBridge Pipes ──────────────────────────────────────────────────
+        rule("pipes", "POST",   "^/v1/pipes/[^/]+/start$", "pipes:StartPipe"),
+        rule("pipes", "POST",   "^/v1/pipes/[^/]+/stop$",  "pipes:StopPipe"),
+        rule("pipes", "GET",    "^/v1/pipes/[^/]+$",       "pipes:DescribePipe"),
+        rule("pipes", "POST",   "^/v1/pipes/[^/]+$",       "pipes:CreatePipe"),
+        rule("pipes", "PUT",    "^/v1/pipes/[^/]+$",       "pipes:UpdatePipe"),
+        rule("pipes", "DELETE", "^/v1/pipes/[^/]+$",       "pipes:DeletePipe"),
+        rule("pipes", "GET",    "^/v1/pipes$",             "pipes:ListPipes"),
+        rule("pipes", "GET",    "^/tags(/.+)?$",           "pipes:ListTagsForResource"),
+        rule("pipes", "POST",   "^/tags(/.+)?$",           "pipes:TagResource"),
+        rule("pipes", "DELETE", "^/tags(/.+)?$",           "pipes:UntagResource"),
+
         // ── SES v2 ─────────────────────────────────────────────────────────────
         // SES v1 is a Query API and resolves from its Action like any other; v2 is REST-JSON under
         // /v2/email, so every operation needs its own rule. One rule per operation in the SES v2

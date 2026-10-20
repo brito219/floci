@@ -51,6 +51,9 @@ class IamRestRouteCoverageTest {
             "GetBucketMetadataConfiguration", "s3:ListBucket",
             "DeleteBucketMetadataConfiguration", "s3:DeleteBucket");
 
+    /** Models every operation of which is checked: the services whose routes the registry maps in full. */
+    private static final Set<String> FULLY_ROUTED_MODELS = Set.of("scheduler", "pipes");
+
     private final IamActionRegistry registry = new IamActionRegistry();
 
     @TestFactory
@@ -70,6 +73,26 @@ class IamRestRouteCoverageTest {
                         assertEquals(expected, resolve(route), route.toString());
                     }
                 }));
+            }
+        }
+        return tests.stream();
+    }
+
+    @TestFactory
+    Stream<DynamicTest> everyOperationOfAFullyRoutedServiceResolvesToItsAction() throws IOException {
+        JsonNode models = load("/aws/rest-routes.json").path("models");
+        JsonNode authorized = load("/aws/iam-authorized-actions.json").path("authorizedActions");
+        List<DynamicTest> tests = new ArrayList<>();
+        for (String model : FULLY_ROUTED_MODELS) {
+            String scope = models.path(model).path("credentialScope").asText();
+            Iterator<Map.Entry<String, JsonNode>> operations = models.path(model).path("operations").fields();
+            while (operations.hasNext()) {
+                Map.Entry<String, JsonNode> operation = operations.next();
+                Route route = new Route(scope, model, operation.getKey(), operation.getValue().path("method").asText(),
+                        operation.getValue().path("requestUri").asText());
+                String expected = authorized.path(scope).path(operation.getKey()).asText(scope + ":" + operation.getKey());
+                tests.add(DynamicTest.dynamicTest(model + " " + operation.getKey(),
+                        () -> assertEquals(expected, resolve(route), route.toString())));
             }
         }
         return tests.stream();

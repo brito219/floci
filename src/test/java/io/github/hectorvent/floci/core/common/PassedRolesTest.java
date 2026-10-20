@@ -137,6 +137,18 @@ class PassedRolesTest {
     }
 
     @Test
+    void schedulerAndPipesPassTheRoleTheyName() {
+        String target = "{\"Target\":{\"RoleArn\":\"" + ROLES + "schedule\"}}";
+        assertEquals(List.of(passed("schedule", "scheduler.amazonaws.com")),
+                PassedRoles.of("scheduler:CreateSchedule", json(target), LOOKUPS));
+        assertEquals(List.of(passed("schedule", "scheduler.amazonaws.com")),
+                PassedRoles.of("scheduler:UpdateSchedule", json(target), LOOKUPS));
+        String pipe = "{\"RoleArn\":\"" + ROLES + "pipe\"}";
+        assertEquals(List.of(passed("pipe", "pipes.amazonaws.com")), PassedRoles.of("pipes:CreatePipe", json(pipe), LOOKUPS));
+        assertEquals(List.of(passed("pipe", "pipes.amazonaws.com")), PassedRoles.of("pipes:UpdatePipe", json(pipe), LOOKUPS));
+    }
+
+    @Test
     void outsideEcsOnlyARoleArnIsPassed() {
         assertEquals(List.of(), PassedRoles.of("states:CreateStateMachine", json("{\"roleArn\":\"sm\"}"), LOOKUPS));
     }

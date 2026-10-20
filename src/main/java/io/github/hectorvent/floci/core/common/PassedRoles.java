@@ -60,6 +60,8 @@ final class PassedRoles {
     private static final String ECS_TASKS = ServicePrincipals.of("ecs-tasks");
     private static final String STATES = ServicePrincipals.of("states");
     private static final String EVENTS = ServicePrincipals.of("events");
+    private static final String SCHEDULER = ServicePrincipals.of("scheduler");
+    private static final String PIPES = ServicePrincipals.of("pipes");
     private static final String CLOUDFORMATION = ServicePrincipals.of("cloudformation");
 
     private static final String STACK_SET_ADMINISTRATION_ROLE = "AWSCloudFormationStackSetAdministrationRole";
@@ -111,6 +113,8 @@ final class PassedRoles {
             case "states:CreateStateMachine", "states:UpdateStateMachine" -> fromJson(ctx, STATES, "roleArn");
             case "events:PutRule" -> fromJson(ctx, EVENTS, "RoleArn");
             case "events:PutTargets" -> fromJson(ctx, EVENTS, "Targets", "[]", "RoleArn");
+            case "scheduler:CreateSchedule", "scheduler:UpdateSchedule" -> fromJson(ctx, SCHEDULER, "Target", "RoleArn");
+            case "pipes:CreatePipe", "pipes:UpdatePipe" -> fromJson(ctx, PIPES, "RoleArn");
             case "cloudformation:CreateStack", "cloudformation:UpdateStack", "cloudformation:DeleteStack",
                  "cloudformation:CreateChangeSet", "cloudformation:ContinueUpdateRollback" ->
                     fromForm(ctx, CLOUDFORMATION, "RoleARN");

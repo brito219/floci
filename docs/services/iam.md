@@ -1246,16 +1246,28 @@ a Query `Action` field on it does not change the action it is checked as, and it
 still percent-encoded, as the router matches it, so an encoded `/` inside a parameter cannot make
 the route's rule miss.
 
-The REST routes mapped to an action are those of S3, Lambda, API Gateway, SES v2, RDS Data and
-Kinesis. In Lambda they are the function, alias, event source mapping, function URL, durable
-execution and Web Function routes, `InvokeWithResponseStream` (checked as `lambda:InvokeFunction`)
-and `GetLayerVersionByArn` (`lambda:GetLayerVersion`); the other Lambda routes, such as layers,
-versions, concurrency and MicroVMs, are not mapped yet. API Gateway's management API, v1 and v2, is
-checked as `apigateway:` and the HTTP method, `apigateway:GET`, `apigateway:POST` and so on, except
+The REST routes mapped to an action are those of S3, Lambda, API Gateway, SES v2, RDS Data,
+Kinesis, EventBridge Scheduler and EventBridge Pipes. In Lambda they are the function, alias,
+event source mapping, function URL, durable execution and Web Function routes,
+`InvokeWithResponseStream` (checked as `lambda:InvokeFunction`) and `GetLayerVersionByArn`
+(`lambda:GetLayerVersion`); the other Lambda routes, such as layers, versions, concurrency and
+MicroVMs, are not mapped yet. API Gateway's management API, v1 and v2, is checked as `apigateway:`
+and the HTTP method, `apigateway:GET`, `apigateway:POST` and so on, except
 `RejectDomainNameAccessAssociation` (`apigateway:RejectAccessAssociation`) and `PutRoutingRule`
 (`apigateway:UpdateRoutingRule`); the v2 routing rule, portal and portal product operations, which
-AWS checks as actions of their own names, are not served. A route no rule maps is not checked, as
-an unsigned REST request is not; the other REST services' routes are not mapped yet.
+AWS checks as actions of their own names, are not served.
+
+A Scheduler request is checked against `schedule/<group>/<name>`, the group from the body's
+`GroupName` on a create or an update, from `groupName` otherwise, and `default` when neither names
+one, or `schedule-group/<name>`. A Pipes request is checked against `pipe/<name>`.
+
+The shared tagging routes, `/tags` and `/v1/tags`, hand a request to the service its ARN names,
+and it is checked as that service, against that ARN, whatever scope it is signed with. The ARN is
+the one after `/tags/` or `/v1/tags/`, the body's `resourceArn` on `POST /tags`, and the
+`resourceArn` query parameter on the other bare routes.
+
+A route no rule maps is not checked, as an unsigned REST request is not; the other REST services'
+routes are not mapped yet.
 
 An S3 `CreateBucket` is checked as `s3:CreateBucket`, and also needs one action for each header
 that configures the new bucket, as the CreateBucket API reference lists them:
@@ -1355,7 +1367,9 @@ role each passes:
 - **Step Functions:** `CreateStateMachine` and `UpdateStateMachine` pass `roleArn` to
   `states.amazonaws.com`, in a JSON or a CBOR body.
 - **EventBridge:** `PutRule` passes `RoleArn`, and `PutTargets` each target's `RoleArn`, to
-  `events.amazonaws.com`.
+  `events.amazonaws.com`. **EventBridge Scheduler:** `CreateSchedule` and `UpdateSchedule` pass the
+  target's `RoleArn` to `scheduler.amazonaws.com`. **EventBridge Pipes:** `CreatePipe` and
+  `UpdatePipe` pass `RoleArn` to `pipes.amazonaws.com`.
 - **CloudFormation:** `CreateStack`, `UpdateStack`, `DeleteStack`, `CreateChangeSet` and
   `ContinueUpdateRollback` pass `RoleARN` to `cloudformation.amazonaws.com` when the request names
   one. `CreateStackSet` and `UpdateStackSet` pass `AdministrationRoleARN`, or, for a self-managed

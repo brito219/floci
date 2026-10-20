@@ -34,6 +34,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
@@ -1197,12 +1198,112 @@ class ResourceArnBuilderTest {
     }
 
     @Test
+    void schedulerRoutesResolveTheScheduleInItsGroupTheGroupOrTheTaggedArn() {
+        when(uriInfo.getPath()).thenReturn("/schedules/nightly");
+        assertEquals("arn:aws:scheduler:us-east-1:000000000000:schedule/default/nightly",
+                builder.build("scheduler", ctx, "us-east-1", "000000000000"));
+        queryParams.putSingle("groupName", "reports");
+        assertEquals("arn:aws:scheduler:us-east-1:000000000000:schedule/reports/nightly",
+                builder.build("scheduler", ctx, "us-east-1", "000000000000"));
+        // A create or update names its group in the body, which Scheduler reads, not in the query, which
+        // it ignores for them: a groupName there does not move the check to another group.
+        when(ctx.getMethod()).thenReturn("POST");
+        setJsonBody("{\"GroupName\":\"billing\",\"ScheduleExpression\":\"rate(1 hour)\"}");
+        assertEquals("arn:aws:scheduler:us-east-1:000000000000:schedule/billing/nightly",
+                builder.build("scheduler", ctx, "us-east-1", "000000000000"));
+        queryParams.putSingle("groupName", "reports");
+        setJsonBody("{\"GroupName\":\"billing\",\"ScheduleExpression\":\"rate(1 hour)\"}");
+        assertEquals("arn:aws:scheduler:us-east-1:000000000000:schedule/billing/nightly",
+                builder.build("scheduler", ctx, "us-east-1", "000000000000"));
+        queryParams.clear();
+        when(ctx.getMethod()).thenReturn("PUT");
+        setJsonBody("{\"ScheduleExpression\":\"rate(1 hour)\"}");
+        assertEquals("arn:aws:scheduler:us-east-1:000000000000:schedule/default/nightly",
+                builder.build("scheduler", ctx, "us-east-1", "000000000000"));
+        when(ctx.getMethod()).thenReturn("GET");
+        queryParams.clear();
+        when(uriInfo.getPath()).thenReturn("/schedule-groups/reports");
+        assertEquals("arn:aws:scheduler:us-east-1:000000000000:schedule-group/reports",
+                builder.build("scheduler", ctx, "us-east-1", "000000000000"));
+        String group = "arn:aws:scheduler:us-east-1:000000000000:schedule-group/reports";
+        when(uriInfo.getPath()).thenReturn("/tags/" + group);
+        assertEquals(group, builder.build("scheduler", ctx, "us-east-1", "000000000000"));
+        // The same tagging is served at /tags, the ARN in the resourceArn query parameter or body field.
+        when(uriInfo.getPath()).thenReturn("/tags");
+        queryParams.putSingle("resourceArn", group);
+        assertEquals(group, builder.build("scheduler", ctx, "us-east-1", "000000000000"));
+        queryParams.clear();
+        when(ctx.getMethod()).thenReturn("POST");
+        setJsonBody("{\"resourceArn\":\"" + group + "\",\"tags\":[]}");
+        assertEquals(group, builder.build("scheduler", ctx, "us-east-1", "000000000000"));
+        // POST /tags tags the body's ARN, so a resourceArn in the query does not move the check.
+        queryParams.putSingle("resourceArn", "arn:aws:scheduler:us-east-1:000000000000:schedule-group/other");
+        setJsonBody("{\"resourceArn\":\"" + group + "\",\"tags\":[]}");
+        assertEquals(group, builder.build("scheduler", ctx, "us-east-1", "000000000000"));
+        queryParams.clear();
+        when(uriInfo.getPath()).thenReturn("/schedules");
+        assertEquals("*", builder.build("scheduler", ctx, "us-east-1", "000000000000"));
+    }
+
+    @Test
+    void schedulerAndPipesArnsAreMintedInTheRequestsPartition() {
+        // A Region no partition publishes takes the deployment's partition, as Scheduler and Pipes mint
+        // their ARNs, rather than aws.
+        when(uriInfo.getPath()).thenReturn("/schedules/nightly");
+        assertEquals(List.of("arn:aws-cn:scheduler:xx-local-1:000000000000:schedule/default/nightly"),
+                builder.buildResources("scheduler", ctx, "xx-local-1", "000000000000", "aws-cn"));
+        when(uriInfo.getPath()).thenReturn("/schedule-groups/reports");
+        assertEquals(List.of("arn:aws-cn:scheduler:xx-local-1:000000000000:schedule-group/reports"),
+                builder.buildResources("scheduler", ctx, "xx-local-1", "000000000000", "aws-cn"));
+        when(uriInfo.getPath()).thenReturn("/v1/pipes/orders");
+        assertEquals(List.of("arn:aws-cn:pipes:xx-local-1:000000000000:pipe/orders"),
+                builder.buildResources("pipes", ctx, "xx-local-1", "000000000000", "aws-cn"));
+    }
+
+    @Test
+    void theTaggedArnIsReadWhereTheSharedTaggingControllersReadIt() {
+        String arn = "arn:aws:pipes:us-east-1:000000000000:pipe/orders";
+        when(ctx.getMethod()).thenReturn("GET");
+        when(uriInfo.getPath()).thenReturn("/tags/" + arn);
+        assertEquals(arn, builder.taggedArn(ctx));
+        when(uriInfo.getPath()).thenReturn("/v1/tags/" + arn);
+        assertEquals(arn, builder.taggedArn(ctx));
+        when(uriInfo.getPath()).thenReturn("/tags");
+        queryParams.putSingle("resourceArn", arn);
+        assertEquals(arn, builder.taggedArn(ctx));
+        when(ctx.getMethod()).thenReturn("DELETE");
+        assertEquals(arn, builder.taggedArn(ctx));
+        // POST /v1/tags lists the tags of the ARN its query names, and POST /tags tags the one its body names.
+        when(ctx.getMethod()).thenReturn("POST");
+        when(uriInfo.getPath()).thenReturn("/v1/tags");
+        assertEquals(arn, builder.taggedArn(ctx));
+        when(uriInfo.getPath()).thenReturn("/tags");
+        setJsonBody("{\"tags\":[]}");
+        assertNull(builder.taggedArn(ctx));
+        when(uriInfo.getPath()).thenReturn("/v1/pipes/orders");
+        assertNull(builder.taggedArn(ctx));
+    }
+
+    @Test
     void aStreamingInvokeResolvesItsQualifiedFunctionAsAnInvokeDoes() {
         // A streaming invoke is an invoke: its qualifier and the account its function ARN names count.
         when(uriInfo.getPath()).thenReturn("/2021-11-15/functions/my-function/response-streaming-invocations");
         queryParams.putSingle("Qualifier", "prod");
         assertEquals("arn:aws:lambda:us-east-1:000000000000:function:my-function:prod",
                 builder.build("lambda", ctx, "us-east-1", "000000000000"));
+    }
+
+    @Test
+    void pipesRoutesResolveThePipeOrTheTaggedArn() {
+        String pipe = "arn:aws:pipes:us-east-1:000000000000:pipe/orders";
+        when(uriInfo.getPath()).thenReturn("/v1/pipes/orders");
+        assertEquals(pipe, builder.build("pipes", ctx, "us-east-1", "000000000000"));
+        when(uriInfo.getPath()).thenReturn("/v1/pipes/orders/start");
+        assertEquals(pipe, builder.build("pipes", ctx, "us-east-1", "000000000000"));
+        when(uriInfo.getPath()).thenReturn("/tags/" + pipe);
+        assertEquals(pipe, builder.build("pipes", ctx, "us-east-1", "000000000000"));
+        when(uriInfo.getPath()).thenReturn("/v1/pipes");
+        assertEquals("*", builder.build("pipes", ctx, "us-east-1", "000000000000"));
     }
 
     @Test

@@ -47,6 +47,8 @@ class IamPassRoleEnforcementIntegrationTest {
     private static final String ECS_TASKS = "ecs-tasks.amazonaws.com";
     private static final String ECS = "ecs.amazonaws.com";
     private static final String QUEUE_ARN = "arn:aws:sqs:us-east-1:" + ACCOUNT + ":passrole-queue";
+    private static final String SCHEDULER = "scheduler.amazonaws.com";
+    private static final String PIPES = "pipes.amazonaws.com";
     private static final ObjectMapper CBOR_MAPPER = new ObjectMapper(new CBORFactory());
 
     @TestHTTPResource("/")
@@ -393,6 +395,56 @@ class IamPassRoleEnforcementIntegrationTest {
     }
 
     @Test
+    void aScheduleNeedsTheSchedulerActionOnItsArnAndPassRoleOnItsTargetsRole() {
+        String role = role("scheduler");
+        String other = role("scheduler-other");
+        User user = user("passrole-scheduler");
+        String name = "passrole-schedule-" + suffix();
+        String path = "/schedules/" + name;
+        String arn = "arn:aws:scheduler:us-east-1:" + ACCOUNT + ":schedule/default/" + name;
+
+        // The route is checked as scheduler:CreateSchedule, on the schedule's ARN.
+        user.policy(allow("scheduler:CreateSchedule", arn + "-other") + "," + passRole(role, SCHEDULER));
+        refused(user.rest("scheduler").body(schedule(role)).post(path).then(), "scheduler:CreateSchedule");
+        user.policy(allow("scheduler:CreateSchedule", arn));
+        denied(user.rest("scheduler").body(schedule(role)).post(path).then());
+        user.policy(allow("scheduler:CreateSchedule", arn) + "," + passRole(role, SCHEDULER));
+        user.rest("scheduler").body(schedule(role)).post(path).then().statusCode(200);
+        cleanup.register(() -> admin("scheduler").delete(path));
+
+        user.policy(allow("scheduler:UpdateSchedule", arn) + "," + passRole(role, SCHEDULER));
+        denied(user.rest("scheduler").body(schedule(other)).put(path).then());
+        user.policy(allow("scheduler:UpdateSchedule", arn) + "," + passRole(other, SCHEDULER));
+        user.rest("scheduler").body(schedule(other)).put(path).then().statusCode(200);
+    }
+
+    @Test
+    void aPipeNeedsThePipesActionOnItsArnAndPassRoleOnItsRole() {
+        String role = role("pipes");
+        String other = role("pipes-other");
+        User user = user("passrole-pipes");
+        String name = "passrole-pipe-" + suffix();
+        String path = "/v1/pipes/" + name;
+        String arn = "arn:aws:pipes:us-east-1:" + ACCOUNT + ":pipe/" + name;
+        String create = "{\"Source\":\"" + QUEUE_ARN + "\",\"Target\":\"" + QUEUE_ARN + "\",\"RoleArn\":\"" + role
+                + "\",\"DesiredState\":\"STOPPED\"}";
+
+        user.policy(allow("pipes:CreatePipe", arn + "-other") + "," + passRole(role, PIPES));
+        refused(user.rest("pipes").body(create).post(path).then(), "pipes:CreatePipe");
+        user.policy(allow("pipes:CreatePipe", arn));
+        denied(user.rest("pipes").body(create).post(path).then());
+        user.policy(allow("pipes:CreatePipe", arn) + "," + passRole(role, PIPES));
+        user.rest("pipes").body(create).post(path).then().statusCode(200);
+        cleanup.register(() -> admin("pipes").delete(path));
+
+        String update = "{\"RoleArn\":\"" + other + "\",\"DesiredState\":\"STOPPED\"}";
+        user.policy(allow("pipes:UpdatePipe", arn) + "," + passRole(role, PIPES));
+        denied(user.rest("pipes").body(update).put(path).then());
+        user.policy(allow("pipes:UpdatePipe", arn) + "," + passRole(other, PIPES));
+        user.rest("pipes").body(update).put(path).then().statusCode(200);
+    }
+
+    @Test
     void aStackNeedsPassRoleOnAServiceRoleTheRequestNames() {
         String role = role("cloudformation");
         User user = user("passrole-stack");
@@ -553,6 +605,17 @@ class IamPassRoleEnforcementIntegrationTest {
         return compressed.toByteArray();
     }
 
+    /** A REST request refused for the operation's own action, which the message names. */
+    private static void refused(ValidatableResponse response, String action) {
+        response.statusCode(403).body(containsString(action)).body(not(containsString("iam:PassRole")));
+    }
+
+    private static String schedule(String role) {
+        return """
+                {"ScheduleExpression":"rate(1 hour)","FlexibleTimeWindow":{"Mode":"OFF"},
+                 "Target":{"Arn":"%s","RoleArn":"%s"}}""".formatted(QUEUE_ARN, role);
+    }
+
     private static void denied(ValidatableResponse response) {
         response.statusCode(403).body(containsString("iam:PassRole"));
     }
@@ -626,6 +689,10 @@ class IamPassRoleEnforcementIntegrationTest {
 
         RequestSpecification ecs(String action) {
             return json("ecs", "AmazonEC2ContainerServiceV20141113." + action);
+        }
+
+        RequestSpecification rest(String service) {
+            return given().header("Authorization", auth(accessKeyId, service)).contentType("application/json");
         }
 
         RequestSpecification json(String service, String target) {

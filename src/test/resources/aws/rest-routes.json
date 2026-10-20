@@ -334,6 +334,22 @@
         "UpdateFunctionUrlConfig": {"method": "PUT", "requestUri": "/2021-10-31/functions/{FunctionName}/url"}
       }
     },
+    "pipes": {
+      "credentialScope": "pipes",
+      "apiVersion": "2015-10-07",
+      "operations": {
+        "CreatePipe": {"method": "POST", "requestUri": "/v1/pipes/{Name}"},
+        "DeletePipe": {"method": "DELETE", "requestUri": "/v1/pipes/{Name}"},
+        "DescribePipe": {"method": "GET", "requestUri": "/v1/pipes/{Name}"},
+        "ListPipes": {"method": "GET", "requestUri": "/v1/pipes"},
+        "ListTagsForResource": {"method": "GET", "requestUri": "/tags/{resourceArn}"},
+        "StartPipe": {"method": "POST", "requestUri": "/v1/pipes/{Name}/start"},
+        "StopPipe": {"method": "POST", "requestUri": "/v1/pipes/{Name}/stop"},
+        "TagResource": {"method": "POST", "requestUri": "/tags/{resourceArn}"},
+        "UntagResource": {"method": "DELETE", "requestUri": "/tags/{resourceArn}"},
+        "UpdatePipe": {"method": "PUT", "requestUri": "/v1/pipes/{Name}"}
+      }
+    },
     "s3": {
       "credentialScope": "s3",
       "apiVersion": "2006-03-01",
@@ -454,6 +470,24 @@
         "UploadPart": {"method": "PUT", "requestUri": "/{Bucket}/{Key+}"},
         "UploadPartCopy": {"method": "PUT", "requestUri": "/{Bucket}/{Key+}"},
         "WriteGetObjectResponse": {"method": "POST", "requestUri": "/WriteGetObjectResponse"}
+      }
+    },
+    "scheduler": {
+      "credentialScope": "scheduler",
+      "apiVersion": "2021-06-30",
+      "operations": {
+        "CreateSchedule": {"method": "POST", "requestUri": "/schedules/{Name}"},
+        "CreateScheduleGroup": {"method": "POST", "requestUri": "/schedule-groups/{Name}"},
+        "DeleteSchedule": {"method": "DELETE", "requestUri": "/schedules/{Name}"},
+        "DeleteScheduleGroup": {"method": "DELETE", "requestUri": "/schedule-groups/{Name}"},
+        "GetSchedule": {"method": "GET", "requestUri": "/schedules/{Name}"},
+        "GetScheduleGroup": {"method": "GET", "requestUri": "/schedule-groups/{Name}"},
+        "ListScheduleGroups": {"method": "GET", "requestUri": "/schedule-groups"},
+        "ListSchedules": {"method": "GET", "requestUri": "/schedules"},
+        "ListTagsForResource": {"method": "GET", "requestUri": "/tags/{ResourceArn}"},
+        "TagResource": {"method": "POST", "requestUri": "/tags/{ResourceArn}"},
+        "UntagResource": {"method": "DELETE", "requestUri": "/tags/{ResourceArn}"},
+        "UpdateSchedule": {"method": "PUT", "requestUri": "/schedules/{Name}"}
       }
     }
   }

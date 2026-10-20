@@ -774,8 +774,34 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
                 || resourceInfo == null || resourceInfo.getResourceClass() == null) {
             return null;
         }
-        return catalog.byResourceClass(resourceInfo.getResourceClass())
+        Class<?> resourceClass = resourceInfo.getResourceClass();
+        if (SharedTagsController.class.equals(resourceClass) || V1TagsController.class.equals(resourceClass)) {
+            return taggedServiceAuthorization(ctx);
+        }
+        return catalog.byResourceClass(resourceClass)
                 .map(descriptor -> resolveRestAuthorization(descriptor, ctx))
+                .orElse(null);
+    }
+
+    /**
+     * A shared tagging route hands the request to the service its ARN names, so it is checked as that
+     * service whatever scope it is signed with. A service with no rule for the route leaves it unchecked, as
+     * any route no rule maps; an ARN naming no service Floci serves, which the controller refuses, is left
+     * to the signing scope.
+     */
+    private ResolvedAuthorization taggedServiceAuthorization(ContainerRequestContext ctx) {
+        String arn = arnBuilder.taggedArn(ctx);
+        if (!AwsArnUtils.isArn(arn)) {
+            return null;
+        }
+        String service = AwsArnUtils.parse(arn).service();
+        return catalog.byCredentialScope(service)
+                .map(descriptor -> {
+                    ResolvedAuthorization authorization = resolveRestAuthorization(descriptor, ctx);
+                    return authorization != null
+                            ? authorization
+                            : new ResolvedAuthorization(catalog.canonicalCredentialScope(service), null);
+                })
                 .orElse(null);
     }
 
@@ -1440,7 +1466,10 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         };
     }
 
-    /** Logs and Secrets Manager targets depend on the serving operation and the request's partition. */
+    /**
+     * Logs and Secrets Manager targets depend on the serving operation and the request's partition;
+     * Scheduler and Pipes targets on the request's partition, which those services mint their ARNs in.
+     */
     private List<String> targetResources(String credentialScope, String action, ContainerRequestContext ctx,
                                          String region, String accountId) {
         if ("logs".equals(credentialScope)) {
@@ -1448,6 +1477,9 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         }
         if ("secretsmanager".equals(credentialScope)) {
             return arnBuilder.buildSecretsManagerResources(action, ctx, region, accountId, requestPartition());
+        }
+        if ("scheduler".equals(credentialScope) || "pipes".equals(credentialScope)) {
+            return arnBuilder.buildResources(credentialScope, ctx, region, accountId, requestPartition());
         }
         return arnBuilder.buildResources(credentialScope, ctx, region, accountId);
     }
